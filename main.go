@@ -150,6 +150,7 @@ func main() {
 	readers = append(readers, imported.New(importRoot))
 
 	srv := server.New(database, readers)
+	defer srv.CloseExecutionMonitors()
 	srv.Version = version
 	srv.Commit = commit
 	srv.AppMode = appMode

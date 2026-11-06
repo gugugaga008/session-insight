@@ -26,7 +26,7 @@ var (
 	reOpenAIKey  = regexp.MustCompile(`\bsk-[A-Za-z0-9._\-]{16,}\b`)
 	reAWSKey     = regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)
 	reGHToken    = regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`)
-	reAssignment = regexp.MustCompile(`(?i)\b(api[_\-]?key|secret|token|password|passwd|access[_\-]?key)\b(\s*[:=]\s*)("?)[^\s"']{6,}("?)`)
+	reAssignment = regexp.MustCompile(`(?i)\b(api[_\-]?key|secret|token|password|passwd|access[_\-]?key)\b(["']?\s*[:=]\s*)(["']?)[^\s"']{6,}(["']?)`)
 	rePEM        = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`)
 	reEmail      = regexp.MustCompile(`\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b`)
 	reHomePath   = regexp.MustCompile(`(/(?:home|Users)/[^/\s]+)`)

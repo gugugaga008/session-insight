@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 44
+const currentSchemaVersion = 45
 
 type DB struct {
 	conn *sql.DB
@@ -226,6 +226,17 @@ func migrate(conn *sql.DB) error {
 	CREATE TABLE IF NOT EXISTS app_settings (
 	    key TEXT PRIMARY KEY,
 	    value TEXT NOT NULL
+	);
+
+	-- Version 45: independently persisted single-session execution monitor.
+	-- No foreign key to sessions: source lookup is exact and does not require
+	-- the asynchronous indexer to have discovered this session yet.
+	CREATE TABLE IF NOT EXISTS execution_boards (
+	    agent_type TEXT NOT NULL,
+	    session_id TEXT NOT NULL,
+	    enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+	    state_json TEXT NOT NULL,
+	    PRIMARY KEY (agent_type, session_id)
 	);
 
 	-- LLM provider 配置（api 型 = OpenAI 兼容 HTTP；acp 型 = 本地 CLI 走 ACP 协议）

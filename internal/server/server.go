@@ -9,6 +9,7 @@ import (
 
 	"github.com/bbsteel/session-insight/internal/changehost"
 	"github.com/bbsteel/session-insight/internal/db"
+	"github.com/bbsteel/session-insight/internal/execution"
 	"github.com/bbsteel/session-insight/internal/llm"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/quota"
@@ -40,6 +41,8 @@ type Server struct {
 	// newGenerationClient is overridden by handler tests that need to verify
 	// typed model failures without starting a real provider process.
 	newGenerationClient func(llm.Config) (llm.Client, error)
+
+	execution *execution.Manager
 
 	// Version/Commit 由 main 从 -ldflags 注入值转交；release 构建只有 Version，
 	// Commit 为空表示非开发构建，GET /api/version 据此决定是否回传 commit。
@@ -157,11 +160,15 @@ func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 	if err := s.restoreOpenAPIHostParsers(); err != nil {
 		log.Printf("restore OpenAPI host parsers: %v", err)
 	}
+	s.initExecution()
 	s.registerRoutes()
 	return s
 }
 
 func (s *Server) registerRoutes() {
+	s.Mux.HandleFunc("GET /api/sessions/{id}/execution", s.handleGetExecution)
+	s.Mux.HandleFunc("POST /api/sessions/{id}/execution", s.handlePostExecution)
+	s.Mux.HandleFunc("POST /api/sessions/{id}/execution/refresh", s.handleRefreshExecution)
 	s.Mux.HandleFunc("GET /api/bookmarks", s.handleListBookmarks)
 	s.Mux.HandleFunc("GET /api/snippets", s.handleListSnippets)
 	s.Mux.HandleFunc("POST /api/snippets", s.handleCreateSnippet)

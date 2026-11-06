@@ -27,6 +27,9 @@ type Config struct {
 	Headers map[string]string
 	Agent   string // acp: "claude" | "codex" | "gemini" | "grok"
 	ModelID string // the explicitly selected model
+	// MaxOutputTokens optionally bounds API completion cost. Zero preserves
+	// provider defaults for existing callers; CLI sources use prompt budgets.
+	MaxOutputTokens int
 }
 
 // Model is one selectable model advertised by a provider.

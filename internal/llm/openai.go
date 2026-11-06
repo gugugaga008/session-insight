@@ -129,6 +129,9 @@ func (c *openAIClient) generate(ctx context.Context, messages []map[string]strin
 		"messages": messages,
 		"stream":   false,
 	}
+	if c.cfg.MaxOutputTokens > 0 {
+		body["max_tokens"] = c.cfg.MaxOutputTokens
+	}
 	if onStatus != nil {
 		onStatus("等待模型响应")
 	}
