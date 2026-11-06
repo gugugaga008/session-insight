@@ -34,7 +34,10 @@ transcript parser or modify agent session files.
   multiple tabs view that session. New events arriving during generation remain
   pending for the next window.
 - Input windows, tool context, output size, stage count, and progress history are
-  bounded. API model requests also specify a 3,000-token output limit. Opening a long session starts from a recent window and displays the
+  bounded. API model requests specify a 6,000-token output limit, allowing room
+  for providers that count reasoning toward that limit. Model citations omit
+  long tool-call IDs; the server restores exact links from source events.
+  Opening a long session starts from a recent window and displays the
   limited-source notice. Later deltas are consumed in order.
 - The model receives source data separately from instructions when the provider
   supports a system role. The existing insight redactor scrubs outgoing text.

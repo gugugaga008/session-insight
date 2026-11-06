@@ -80,7 +80,7 @@ func (s *Server) initExecution() {
 			return "", errors.New("no_provider")
 		}
 		cfg := providerLLMConfig(provider)
-		cfg.MaxOutputTokens = 3000
+		cfg.MaxOutputTokens = 6000
 		client, err := s.generationClient(cfg)
 		if err != nil {
 			return "", err

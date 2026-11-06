@@ -85,7 +85,7 @@ func executionTestServer(t *testing.T) (*Server, *executionAPIReader, *execution
 	s := New(database, []reader.BaseSessionReader{other, rd})
 	client := &executionAPIClient{}
 	s.newGenerationClient = func(cfg llm.Config) (llm.Client, error) {
-		if cfg.MaxOutputTokens != 3000 {
+		if cfg.MaxOutputTokens != 6000 {
 			t.Errorf("execution output budget missing: %d", cfg.MaxOutputTokens)
 		}
 		return client, nil
