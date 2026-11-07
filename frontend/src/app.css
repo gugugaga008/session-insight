@@ -713,7 +713,7 @@ body {
 .execution-status-summarizing, .execution-activity-responding { color: var(--accent-blue); }
 .execution-status-paused { color: var(--accent-amber); }
 .execution-status-error { color: var(--error); }
-.execution-content { display: grid; flex: 1 0 auto; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); align-items: stretch; gap: 16px; padding: 0 24px; }
+.execution-content { display: grid; flex: 1 0 auto; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); align-items: start; gap: 16px; padding: 0 24px; }
 .execution-main { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
 .execution-card { min-width: 0; border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-surface); box-shadow: var(--elev-sm); padding: 16px; overflow-wrap: anywhere; }
 .execution-card-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 12px; }
@@ -762,7 +762,7 @@ button.execution-activity:hover { border-color: currentColor; background: var(--
 .execution-activity-idle { color: var(--text-muted); }
 .execution-elapsed { flex: none; padding-left: 6px; border-left: 1px solid var(--border-default); color: var(--text-secondary); font-size: var(--text-meta-size); font-variant-numeric: tabular-nums; }
 .execution-activity-jump { flex: none; color: var(--text-muted); }
-.execution-timeline { display: flex; flex-direction: column; }
+.execution-timeline { display: flex; flex-direction: column; min-height: 220px; }
 .execution-timeline .execution-card-heading { margin-bottom: 4px; }
 .execution-timeline-hint { margin-bottom: 16px; color: var(--text-muted); font-size: var(--text-helper-size); }
 .execution-timeline ol { list-style: none; margin: 0; padding: 0; }
@@ -778,7 +778,7 @@ button.execution-activity:hover { border-color: currentColor; background: var(--
 .execution-timeline-body > p { color: var(--text-secondary); font-size: var(--text-nav-size); white-space: pre-wrap; }
 .execution-timeline li:first-child .execution-timeline-body > p { color: var(--text-primary); }
 .execution-timeline .execution-refs { margin-top: 8px; }
-.execution-timeline-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+.execution-timeline-empty { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 160px; padding: 24px; text-align: center; }
 .execution-timeline-empty .execution-placeholder { max-width: 340px; }
 .execution-timeline-more { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-muted); }
 .execution-timeline-more > span { flex: 1; color: var(--text-muted); font-size: var(--text-meta-size); }
