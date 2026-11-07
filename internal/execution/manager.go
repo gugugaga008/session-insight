@@ -298,6 +298,15 @@ func (m *Manager) observe(key Key, e *entry, schedule bool) error {
 		m.failLocked(key, e, "source_unavailable", now)
 		return err
 	}
+	// A transient source read failure must not leave a stale warning after the
+	// same source becomes readable again. Generation failures are cleared only
+	// by a successful interpretation.
+	if e.state.Board.ErrorCode == "source_unavailable" {
+		e.state.Board.ErrorCode = ""
+		if e.state.Board.Status == "error" {
+			e.state.Board.Status = "watching"
+		}
+	}
 	activity := ObserveActivity(events)
 	events = CursorEvents(events)
 	digests := PrefixDigests(events)
