@@ -96,6 +96,17 @@ func (m *Manager) Restore() error {
 	return nil
 }
 func (m *Manager) newEntry(s State) *entry {
+	if s.ScopeVersion != RequestScopeVersion {
+		// Old saved cards could describe unrelated previous requests. Clear
+		// those interpretations even for a paused board without spending.
+		enabled, provider, activity, status := s.Board.Enabled, s.Board.ProviderID, s.Board.Activity, s.Board.Status
+		s.Board = Empty()
+		s.Board.Enabled, s.Board.ProviderID, s.Board.Activity, s.Board.Status = enabled, provider, activity, status
+		s.Cursor, s.Digest, s.TaskID = 0, "", ""
+		s.Initialized = false
+		s.ScopeVersion = RequestScopeVersion
+		s.RetryAt, s.Failures = time.Time{}, 0
+	}
 	normalize(&s.Board)
 	if s.Board.Enabled {
 		s.Board.Status = "watching"
@@ -134,11 +145,23 @@ func cloneBoard(b Board) Board {
 }
 func (m *Manager) Get(key Key) (Board, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	e, err := m.getLocked(key)
 	if err != nil {
+		m.mu.Unlock()
 		return Empty(), err
 	}
+	paused := !e.state.Board.Enabled
+	if !paused {
+		board := cloneBoard(e.state.Board)
+		m.mu.Unlock()
+		return board, nil
+	}
+	m.mu.Unlock()
+	// Pausing stops model requests, not source observation. A new user turn
+	// must invalidate old cards even when explanations remain paused.
+	_ = m.observe(key, e, false)
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return cloneBoard(e.state.Board), nil
 }
 func (m *Manager) Configure(key Key, locale string, enabled bool, provider int64) (Board, error) {
@@ -258,18 +281,19 @@ func (m *Manager) observe(key Key, e *entry, schedule bool) error {
 	e.observeMu.Lock()
 	defer e.observeMu.Unlock()
 	m.mu.Lock()
-	enabled := e.state.Board.Enabled && !m.closed
+	canObserve := !m.closed && (e.state.Board.Enabled || !schedule)
 	m.mu.Unlock()
-	if !enabled {
+	if !canObserve {
 		return nil
 	}
 	events, err := m.source(m.ctx, key)
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !e.state.Board.Enabled || m.closed {
+	if m.closed || (!e.state.Board.Enabled && schedule) {
 		return nil
 	}
+	previousStatus := e.state.Board.Status
 	if err != nil {
 		m.failLocked(key, e, "source_unavailable", now)
 		return err
@@ -298,7 +322,12 @@ func (m *Manager) observe(key Key, e *entry, schedule bool) error {
 	}
 	w := BuildWindow(events, e.state)
 	e.state.Board.SourceLimited = w.SourceLimited
-	if e.state.Board.Status != "error" {
+	if !e.state.Board.Enabled {
+		e.state.Board.Status = "idle"
+		if previousStatus != "idle" {
+			e.state.Board.Status = "paused"
+		}
+	} else if e.state.Board.Status != "error" {
 		if e.busy {
 			e.state.Board.Status = "summarizing"
 		} else {

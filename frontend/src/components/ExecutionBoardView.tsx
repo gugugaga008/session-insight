@@ -99,6 +99,7 @@ export default function ExecutionBoardView({ sessionId, agentType, active, onJum
   const [selectedProvider, setSelectedProvider] = useState<number | undefined>()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [selectedStage, setSelectedStage] = useState<string | null>(null)
+  const [timelineLimit, setTimelineLimit] = useState(6)
   const [now, setNow] = useState(Date.now)
 
   useEffect(() => {
@@ -147,6 +148,27 @@ export default function ExecutionBoardView({ sessionId, agentType, active, onJum
   const pending = board?.pending_events ?? 0
   const stale = pending > 0 && (!board?.updated_at || now - Date.parse(board.updated_at) > 60_000)
   const errorKey = changeError === 'no_provider' || board?.error_code === 'no_provider' ? 'execution.noProvider' : 'execution.changeFailed'
+  const activity = board?.activity
+  const activityLabel = activity?.kind === 'tool' ? activity.tool_name || t('execution.activity.tool') : t(`execution.activity.${activity?.kind ?? 'idle'}`)
+  const activityStartedAt = activity?.started_at ? Date.parse(activity.started_at) : NaN
+  const showElapsed = activity?.kind !== 'idle' && Number.isFinite(activityStartedAt) && now - activityStartedAt >= 1000
+  const activitySource = activity?.source_refs[0]
+  const elapsedLabel = showElapsed ? t('execution.elapsed', { time: duration(activity?.started_at) }) : undefined
+  const activityTitle = t('execution.activityTitle', {
+    activity: elapsedLabel ? `${activityLabel} · ${elapsedLabel}` : activityLabel,
+    observation: board?.observed_at
+      ? t('execution.observedAt', { time: formatDate(locale, board.observed_at, { dateStyle: 'medium', timeStyle: 'medium' }) })
+      : t('execution.notObserved'),
+  }) + (activitySource ? ` · ${t('execution.sourceTitle', { turn: activitySource.turn_index + 1 })}` : '')
+  const activityContent = <>
+    <i aria-hidden="true" />
+    <span className="execution-activity-name">{activityLabel}</span>
+    {elapsedLabel && <span className="execution-elapsed" data-testid="execution-elapsed">{elapsedLabel}</span>}
+    {activitySource && <span className="execution-activity-jump" aria-hidden="true">↗</span>}
+  </>
+  const updates = [...(board?.updates ?? [])].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+  const visibleUpdates = updates.slice(0, timelineLimit)
+  const dateLabel = (timestamp: string) => formatDate(locale, timestamp, { year: 'numeric', month: 'short', day: 'numeric' })
 
   const refs = (sources: ExecutionRef[]) => sources.length > 0 && (
     <div className="execution-refs">
@@ -167,7 +189,15 @@ export default function ExecutionBoardView({ sessionId, agentType, active, onJum
       <header className="execution-toolbar">
         <div className="execution-heading">
           <span className="execution-eyebrow">{t('execution.singleSession')}</span>
-          <h2>{t('execution.title')}</h2>
+          <div className="execution-title-row">
+            <h2>{t('execution.title')}</h2>
+            {board && (activitySource ? (
+              <button type="button" className={`execution-activity execution-activity-${activity?.kind}`} data-testid="execution-activity"
+                title={activityTitle} aria-label={activityTitle} onClick={() => onJumpToSource(activitySource)}>{activityContent}</button>
+            ) : (
+              <span className={`execution-activity execution-activity-${activity?.kind}`} data-testid="execution-activity" title={activityTitle}>{activityContent}</span>
+            ))}
+          </div>
         </div>
         <div className="execution-controls">
           <label className="execution-provider-label">
@@ -210,10 +240,11 @@ export default function ExecutionBoardView({ sessionId, agentType, active, onJum
       ) : (
         <>
           <div className="execution-statusline">
-            <span className={`execution-status execution-status-${board.status}`} data-testid="execution-status" role="status">
+            <span className={`execution-status execution-status-${board.status}`} data-testid="execution-status" role="status"
+              title={t(enabled ? 'execution.enabledHint' : 'execution.disabledHint')}>
               <i aria-hidden="true" />{t(`execution.status.${board.status}`)}
             </span>
-            <span>{t(enabled ? 'execution.enabledHint' : 'execution.disabledHint')}</span>
+            <span className="execution-service-hint">{t(enabled ? 'execution.enabledShort' : 'execution.disabledShort')}</span>
           </div>
           <div className="execution-content">
             <div className="execution-main">
@@ -222,23 +253,33 @@ export default function ExecutionBoardView({ sessionId, agentType, active, onJum
                   <h3>{t('execution.current')}</h3>
                   <span className="execution-ai-label">{t('execution.aiExplanation')}</span>
                 </div>
-                <p className="execution-goal">{t('execution.goal')}<span>{board.goal || t('execution.goalEmpty')}</span></p>
-                <h4 className="execution-action">{board.current.action || t(enabled ? 'execution.waitingAction' : 'execution.readyAction')}</h4>
-                <p className="execution-purpose">{board.current.purpose || t(enabled ? 'execution.waitingPurpose' : 'execution.readyPurpose')}</p>
-                <dl className="execution-next">
-                  <div className={board.current.blocker ? 'execution-blocked' : ''}>
-                    <dt>{t('execution.blocker')}</dt><dd>{board.current.blocker || t('execution.noBlocker')}</dd>
-                  </div>
-                  <div><dt>{t('execution.nextStep')}</dt><dd>{board.current.next_step || t('execution.noNextStep')}</dd></div>
-                </dl>
-                {refs(board.current.source_refs)}
-                <div className={`execution-freshness ${stale ? 'execution-stale' : ''}`} data-testid="execution-freshness" data-stale={stale}>
-                  <span>{board.updated_at ? t('execution.updatedAgo', { age: duration(board.updated_at) }) : t('execution.notUpdated')}</span>
-                  <span>{pending > 0 ? t(stale ? 'execution.stalePending' : 'execution.pending', { count: pending }) : t('execution.noPending')}</span>
+                <div className={`execution-freshness ${stale ? 'execution-stale' : ''}`} data-testid="execution-freshness" data-stale={stale}
+                  data-pending={pending > 0}>
+                  <span title={board.updated_at ? formatDate(locale, board.updated_at, { dateStyle: 'medium', timeStyle: 'medium' }) : undefined}>
+                    {board.updated_at ? t('execution.updatedAgo', { age: duration(board.updated_at) }) : t('execution.notUpdated')}
+                  </span>
+                  <span className="execution-pending">{pending > 0 ? t(stale ? 'execution.stalePending' : 'execution.pending', { count: pending }) : t('execution.noPending')}</span>
                 </div>
+                <div className="execution-goal"><span className="execution-field-label">{t('execution.goal')}</span><p>{board.goal || t('execution.goalEmpty')}</p></div>
+                <div className="execution-action-group">
+                  <span className="execution-field-label">{t('execution.action')}</span>
+                  <h4 className="execution-action">{board.current.action || t(enabled ? 'execution.waitingAction' : 'execution.readyAction')}</h4>
+                </div>
+                <div className="execution-purpose-group">
+                  <span className="execution-field-label">{t('execution.purpose')}</span>
+                  <p className="execution-purpose">{board.current.purpose || t(enabled ? 'execution.waitingPurpose' : 'execution.readyPurpose')}</p>
+                </div>
+                {(board.current.blocker || board.current.next_step) ? <dl className="execution-next">
+                  {board.current.blocker && <div className="execution-blocked"><dt>{t('execution.blocker')}</dt><dd>{board.current.blocker}</dd></div>}
+                  {board.current.next_step && <div><dt>{t('execution.nextStep')}</dt><dd>{board.current.next_step}</dd></div>}
+                </dl> : <p className="execution-unknown-details">{t('execution.detailsUnknown')}</p>}
+                {refs(board.current.source_refs)}
               </section>
-              <section className="execution-card execution-route" data-testid="execution-route">
-                <div className="execution-card-heading"><h3>{t('execution.route')}</h3><span>{t('execution.routeHint')}</span></div>
+              <details className="execution-card execution-route" data-testid="execution-route">
+                <summary className="execution-route-summary">
+                  <span><strong>{t('execution.route')}</strong><span className="execution-route-hint">{t('execution.routeHint')}</span></span>
+                  <span className="execution-route-chevron" aria-hidden="true">⌄</span>
+                </summary>
                 {board.stages.length === 0 ? <p className="execution-placeholder">{t('execution.routeEmpty')}</p> : (
                   <>
                     <div className="execution-stages">
@@ -247,38 +288,44 @@ export default function ExecutionBoardView({ sessionId, agentType, active, onJum
                         aria-pressed={stage?.id === item.id} aria-current={item.status === 'active' ? 'step' : undefined}
                         onClick={() => setSelectedStage(item.id)} title={t('execution.inspectStage', { title: item.title })}>
                         <span className="execution-stage-number" aria-hidden="true">{item.status === 'completed' ? '✓' : String(index + 1).padStart(2, '0')}</span>
-                        <strong>{item.title}</strong><span>{t(`execution.stage.${item.status}`)}</span>
+                        <strong>{item.title}</strong><span className="execution-stage-status">{t(`execution.stage.${item.status}`)}</span>
                       </button>)}
                     </div>
                     {stage && <div className="execution-stage-detail" data-testid="execution-stage-detail"><p>{stage.summary || t('execution.stageEmpty')}</p>{refs(stage.source_refs)}</div>}
                   </>
                 )}
-              </section>
+              </details>
             </div>
-            <aside className="execution-side">
-              <section className="execution-card execution-activity" data-testid="execution-activity">
-                <div className="execution-card-heading"><h3>{t('execution.activity')}</h3><span className="execution-observed-label">{t('execution.observed')}</span></div>
-                <div className={`execution-activity-kind execution-activity-${board.activity.kind}`}>
-                  <i aria-hidden="true" /><strong>{board.activity.kind === 'tool' ? board.activity.tool_name || t('execution.activity.tool') : t(`execution.activity.${board.activity.kind}`)}</strong>
-                </div>
-                <div className="execution-elapsed" data-testid="execution-elapsed">{t('execution.elapsed', { time: duration(board.activity.started_at) })}</div>
-                {refs(board.activity.source_refs)}
-                <p className="execution-observed-at">{board.observed_at ? t('execution.observedAgo', { age: duration(board.observed_at) }) : t('execution.notObserved')}</p>
-              </section>
-              <section className="execution-card execution-timeline" data-testid="execution-timeline">
-                <div className="execution-card-heading"><h3>{t('execution.progress')}</h3><span>{t('execution.aiExplanation')}</span></div>
-                {board.updates.length === 0 ? <p className="execution-placeholder">{t('execution.progressEmpty')}</p> : (
-                  <ol>{[...board.updates].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).map(update => (
-                    <li key={update.id} data-testid="execution-update">
-                      <time dateTime={update.created_at} title={formatDate(locale, update.created_at, { dateStyle: 'medium', timeStyle: 'medium' })}>
-                        {formatDate(locale, update.created_at, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                      </time>
-                      <p>{update.text}</p>{refs(update.source_refs)}
-                    </li>
-                  ))}</ol>
-                )}
-              </section>
-            </aside>
+            <section className="execution-card execution-timeline" data-testid="execution-timeline">
+              <div className="execution-card-heading"><h3>{t('execution.progress')}</h3><span className="execution-ai-label">{t('execution.aiExplanation')}</span></div>
+              <p className="execution-timeline-hint">{t('execution.progressHint')}</p>
+              {updates.length === 0 ? <div className="execution-timeline-empty"><p className="execution-placeholder">{t('execution.progressEmpty')}</p></div> : (
+                <>
+                  <ol>
+                    {visibleUpdates.map((update, index) => {
+                      const day = dateLabel(update.created_at)
+                      const startsDay = index === 0 || dateLabel(visibleUpdates[index - 1].created_at) !== day
+                      return <li key={update.id} data-testid="execution-update">
+                        {startsDay && <div className="execution-timeline-day">{day}</div>}
+                        <div className="execution-timeline-entry">
+                          <time dateTime={update.created_at} title={formatDate(locale, update.created_at, { dateStyle: 'medium', timeStyle: 'medium' })}>
+                            {formatDate(locale, update.created_at, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </time>
+                          <div className="execution-timeline-body"><p>{update.text}</p>{refs(update.source_refs)}</div>
+                        </div>
+                      </li>
+                    })}
+                  </ol>
+                  {updates.length > 6 && <div className="execution-timeline-more">
+                    <span>{t('execution.progressCount', { shown: visibleUpdates.length, total: updates.length })}</span>
+                    {timelineLimit < updates.length && <button type="button" className="execution-button" data-testid="execution-show-more"
+                      onClick={() => setTimelineLimit(limit => limit + 6)}>{t('execution.showMore', { count: Math.min(6, updates.length - timelineLimit) })}</button>}
+                    {timelineLimit > 6 && <button type="button" className="execution-button" data-testid="execution-show-less"
+                      onClick={() => setTimelineLimit(6)}>{t('execution.showLess')}</button>}
+                  </div>}
+                </>
+              )}
+            </section>
           </div>
           <footer className="execution-footer">
             <p>{t(board.source_limited ? 'execution.sourceLimited' : 'execution.sourceHint')}</p>

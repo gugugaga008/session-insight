@@ -5,6 +5,12 @@ session, choose **Execution board**, select a configured model source, and choos
 **Start**. **Pause** stops explanation requests; it does not stop
 the monitored agent. Model sources use the existing AI settings dialog.
 
+The explanation, request steps, and progress timeline are scoped to the latest
+user request. A new user turn, including an image-only request, clears the
+previous request's interpretation and obsolete pending backlog. Earlier work
+remains available in the original transcript. The compact activity indicator
+beside the board title reflects recorded session activity independently of AI.
+
 The board combines two kinds of information:
 
 - Observed activity comes from normalized session events and updates without a
@@ -32,9 +38,13 @@ transcript parser or modify agent session files.
   cooldown. No new data means no model request.
 - Only one generation runs for a given agent/session at a time, including when
   multiple tabs view that session. New events arriving during generation remain
-  pending for the next window.
+  pending for the next window of the same request. A newer user request takes
+  precedence over unsummarized events from an older request.
 - Input windows, tool context, output size, stage count, and progress history are
-  bounded. API model requests specify a 6,000-token output limit, allowing room
+  bounded. Prior stage references are retained only within the same request;
+  unrelated completed stages cannot become steps of a new request. Older saved
+  boards that mixed requests are invalidated automatically, including paused
+  boards, without authorizing a model call. API model requests specify a 6,000-token output limit, allowing room
   for providers that count reasoning toward that limit. Model citations omit
   long tool-call IDs; the server restores exact links from source events.
   Opening a long session starts from a recent window and displays the

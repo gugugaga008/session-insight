@@ -58,14 +58,20 @@ type Key struct {
 
 // State contains only bounded board data and a verified prefix cursor, never
 // credentials or a persisted transcript. Cursor advances only after success.
+// RequestScopeVersion invalidates older interpretations that mixed separate
+// user requests into one apparent phase route.
+const RequestScopeVersion = 2
+
 type State struct {
-	Board       Board     `json:"board"`
-	Locale      string    `json:"locale"`
-	Cursor      int       `json:"cursor"`
-	Digest      string    `json:"digest"`
-	Initialized bool      `json:"initialized"`
-	RetryAt     time.Time `json:"retry_at"`
-	Failures    int       `json:"failures"`
+	Board        Board     `json:"board"`
+	Locale       string    `json:"locale"`
+	TaskID       string    `json:"task_id,omitempty"`
+	ScopeVersion int       `json:"scope_version"`
+	Cursor       int       `json:"cursor"`
+	Digest       string    `json:"digest"`
+	Initialized  bool      `json:"initialized"`
+	RetryAt      time.Time `json:"retry_at"`
+	Failures     int       `json:"failures"`
 }
 
 func Empty() Board {

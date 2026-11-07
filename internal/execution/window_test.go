@@ -27,13 +27,12 @@ func TestWindowBootstrapDeltaBoundsAndToolContext(t *testing.T) {
 	for i := 0; i < 350; i++ {
 		events = append(events, event(fmt.Sprint(i), "TextChunk", strings.Repeat("字", 3000), i+1))
 	}
-	events = append(events, event("goal2", "UserPrompt", "new goal", 352))
 	s := initialState(events)
 	if s.Cursor != len(events)-TailEvents || !s.Board.SourceLimited {
 		t.Fatalf("bootstrap %+v", s)
 	}
 	w := BuildWindow(events, s)
-	if w.Goal != "new goal" || len(w.Events) > MaxEvents || w.Runes > MaxWindowRunes || len(w.Context) != 1 || w.Context[0].Ref.ToolCallID != "call" {
+	if w.Goal != "old goal" || len(w.Events) > MaxEvents || w.Runes > MaxWindowRunes || len(w.Context) != 1 || w.Context[0].Ref.ToolCallID != "call" {
 		t.Fatalf("bad window %+v", w)
 	}
 	// Live backlogs consume in source order, not a sliding tail that skips data.

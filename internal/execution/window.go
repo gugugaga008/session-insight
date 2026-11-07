@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/insight"
@@ -182,25 +181,35 @@ func inputEvent(e model.RenderEvent) InputEvent {
 	return x
 }
 
-// BuildWindow consumes deltas from the committed cursor in order; backlogs
-// become multiple bounded requests. Bootstrap selection is done only once by
-// Reconcile. Earlier tool invocations/results are context, not cursor movement.
-func BuildWindow(events []model.RenderEvent, state State) Window {
-	w := Window{Previous: state.Board.Current, Stages: state.Board.Stages, Events: []InputEvent{}, Context: []InputEvent{}, SourceLimited: state.Board.SourceLimited, End: state.Cursor}
-	// The latest explicit user request is the current goal anchor; old
-	// requests must not override a later change of direction.
+// requestBoundary isolates the latest explicit user turn. An image-only or
+// empty prompt is still a new request; retaining the preceding goal would
+// present a previous task as the user's current intent.
+func requestBoundary(events []model.RenderEvent) (int, string) {
 	for i := len(events) - 1; i >= 0; i-- {
-		e := events[i]
-		if e.Type == "UserPrompt" && strings.TrimSpace(e.Text) != "" {
-			w.Goal = clip(Scrub(e.Text), 1000)
-			break
+		if events[i].Type == "UserPrompt" {
+			id := events[i].EventID
+			if id == "" {
+				id = fmt.Sprintf("user-turn:%d", events[i].TurnIndex)
+			}
+			return i, id
 		}
 	}
-	// Carry only previously validated references still present in this source.
-	// This lets a completed stage survive delta windows without inventing
-	// fresh evidence or permitting arbitrary historical model citations.
+	return 0, ""
+}
+
+// BuildWindow consumes deltas from the current request in order. Earlier
+// requests cannot contribute goals, completed stages, or tool context.
+func BuildWindow(events []model.RenderEvent, state State) Window {
+	start, _ := requestBoundary(events)
+	cursor := min(len(events), max(start, state.Cursor))
+	w := Window{Previous: state.Board.Current, Stages: state.Board.Stages, Events: []InputEvent{}, Context: []InputEvent{}, SourceLimited: state.Board.SourceLimited, End: cursor}
+	if start < len(events) && events[start].Type == "UserPrompt" {
+		w.Goal = clip(Scrub(events[start].Text), 1000)
+	}
+	// Prior interpretations must still cite this request. This also filters
+	// persisted boards created before request-scoped interpretation existed.
 	available := map[string]bool{}
-	for _, e := range events {
+	for _, e := range events[start:] {
 		available[refKey(Reference(e))] = true
 	}
 	validRefs := func(refs []Ref) []Ref {
@@ -213,13 +222,19 @@ func BuildWindow(events []model.RenderEvent, state State) Window {
 		return out
 	}
 	w.Previous.SourceRefs = validRefs(w.Previous.SourceRefs)
-	w.Stages = append([]Stage{}, w.Stages...)
-	for i := range w.Stages {
-		w.Stages[i].SourceRefs = validRefs(w.Stages[i].SourceRefs)
+	if len(w.Previous.SourceRefs) == 0 {
+		w.Previous = Current{SourceRefs: []Ref{}}
+	}
+	w.Stages = []Stage{}
+	for _, stage := range state.Board.Stages {
+		stage.SourceRefs = validRefs(stage.SourceRefs)
+		if len(stage.SourceRefs) > 0 {
+			w.Stages = append(w.Stages, stage)
+		}
 	}
 	budget := 0
 	var outputTokens int64
-	for i := state.Cursor; i < len(events) && len(w.Events) < MaxEvents; i++ {
+	for i := cursor; i < len(events) && len(w.Events) < MaxEvents; i++ {
 		x := inputEvent(events[i])
 		b, _ := json.Marshal(x)
 		n := len([]rune(string(b)))
@@ -245,9 +260,9 @@ func BuildWindow(events []model.RenderEvent, state State) Window {
 	}
 	// Preserve still-open invocations and the invocation of results in this
 	// batch, even if the invocation fell before bootstrap's recent tail.
-	open := openTools(events, state.Cursor)
+	open := openTools(events, cursor)
 	wanted := map[string]bool{}
-	for i := state.Cursor; i < w.End; i++ {
+	for i := cursor; i < w.End; i++ {
 		if events[i].Type == "ToolResult" {
 			for _, k := range toolAliases(events[i]) {
 				wanted[k] = true
@@ -255,7 +270,7 @@ func BuildWindow(events []model.RenderEvent, state State) Window {
 		}
 	}
 	count := 0
-	for i := state.Cursor - 1; i >= 0; i-- {
+	for i := cursor - 1; i >= start; i-- {
 		e := events[i]
 		if e.Type != "ToolInvocation" {
 			continue
@@ -289,21 +304,21 @@ func BuildWindow(events []model.RenderEvent, state State) Window {
 // Reconcile resets stale interpretations on any committed-prefix rewrite. A
 // first observation skips only bounded historical bootstrap, never live deltas.
 func Reconcile(s *State, events []model.RenderEvent, digests []string, now time.Time) bool {
-	reset := !s.Initialized || s.Cursor > len(events) || s.Cursor < 0 || s.Digest != digests[s.Cursor]
+	start, taskID := requestBoundary(events)
+	reset := !s.Initialized || s.ScopeVersion != RequestScopeVersion || s.TaskID != taskID || s.Cursor > len(events) || s.Cursor < 0 || s.Digest != digests[s.Cursor]
 	if reset {
 		enabled, provider := s.Board.Enabled, s.Board.ProviderID
 		s.Board = Empty()
 		s.Board.Enabled = enabled
 		s.Board.ProviderID = provider
-		s.Cursor = 0
-		if len(events) > TailEvents {
-			s.Cursor = len(events) - TailEvents
-		}
+		s.Cursor = max(start, len(events)-TailEvents)
 		s.Digest = digests[s.Cursor]
+		s.TaskID = taskID
+		s.ScopeVersion = RequestScopeVersion
 		s.Initialized = true
 		s.Failures = 0
 		s.RetryAt = time.Time{}
-		s.Board.SourceLimited = s.Cursor > 0
+		s.Board.SourceLimited = s.Cursor > start
 	}
 	s.Board.PendingEvents = len(events) - s.Cursor
 	s.Board.Activity = ObserveActivity(events)
