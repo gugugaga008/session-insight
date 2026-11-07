@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { addBookmark, APIError, createSnippet, fetchAgents, fetchCollaborationDetail, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote, watchSessionsChanged } from '../api'
+import { addBookmark, APIError, createSnippet, fetchAgents, fetchCollaborationDetail, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote, watchSessionsChanged, type ExecutionRef } from '../api'
 import { DEFAULT_FILE_OPEN_EXTS, extractPathMatches, extractPathsAt, parseExtList, type PathMatch } from '../filePathDetection'
 import { extractTerminalUrlMatches, type TerminalUrlMatch } from '../terminalUrlDetection'
 import type { AgentInfo, EditCall, PositionsResponse, SessionDetail } from '../types'
@@ -23,6 +23,7 @@ import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMe
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
 import GitEvidencePanel from './GitEvidencePanel'
+import ExecutionBoardView from './ExecutionBoardView'
 import AIPanel from './AIPanel'
 import BookmarkNoteEditor from './BookmarkNoteEditor'
 import DiffModal from './DiffModal'
@@ -55,7 +56,7 @@ const TerminalPanel = lazy(() => import('./TerminalPanel'))
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
 type JumpTarget = 'turn' | 'user'
-type ViewMode = 'terminal' | 'analytics'
+type ViewMode = 'terminal' | 'analytics' | 'execution'
 
 // The terminal keeps at least this much height below the expanded dock
 // (design §10.4 / §16: usable at 1280×720).
@@ -1395,6 +1396,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   // buffer and the jump re-fires against the new one. Done when the height is
   // stable and the last fire happened at that height.
   const pendingJumpTurnRef = useRef<number | null>(null)
+  const pendingExecutionSourceRef = useRef<SourceAnchorDTO | null>(null)
   useEffect(() => {
     if (viewMode !== 'terminal' || pendingJumpTurnRef.current == null) return
     const needsFolds = folds.some(f => f.level === 'tool')
@@ -1419,11 +1421,16 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         if (h > 0 && h === prevHeight && foldsApplied && bufferReady) {
           if (h === firedAtHeight) {
             pendingJumpTurnRef.current = null
+            pendingExecutionSourceRef.current = null
             clearInterval(timer)
             return
           }
           const idx = pendingJumpTurnRef.current
-          if (idx != null) scrollToIndexRef.current?.(idx)
+          const source = pendingExecutionSourceRef.current
+          const positions = positionsRef.current?.positions ?? []
+          const targetKind = source?.event_id && positions.some(p => p.payload?.result_event_id === source.event_id) ? 'result' : 'launch'
+          if (source && resolveAnchorJump(source, positions, targetKind)) jumpToCollabAnchor(source, targetKind)
+          else if (idx != null) scrollToIndexRef.current?.(idx)
           firedAtHeight = h
         }
         prevHeight = h
@@ -1434,13 +1441,20 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       if (tries > 150) {
         clearInterval(timer)
         pendingJumpTurnRef.current = null
+        pendingExecutionSourceRef.current = null
       }
     }, 200)
     return () => clearInterval(timer)
-  }, [viewMode, folds])
+  }, [viewMode, folds, jumpToCollabAnchor])
 
-  const handleJumpToTurn = useCallback((index: number) => {
+  useEffect(() => {
+    pendingJumpTurnRef.current = null
+    pendingExecutionSourceRef.current = null
+  }, [sessionId])
+
+  const handleJumpToTurn = useCallback((index: number, source?: SourceAnchorDTO) => {
     pendingJumpTurnRef.current = index
+    pendingExecutionSourceRef.current = source ?? null
     setViewMode('terminal')
   }, [])
 
@@ -1536,9 +1550,21 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     setViewMode('terminal')
   }, [])
 
+  const handleJumpToExecutionSource = useCallback((source: ExecutionRef) => {
+    const tool = source.tool_call_id && positionsRef.current?.positions.find(position => position.kind === 'tool' && position.payload?.tool_call_id === source.tool_call_id)
+    if (tool) handleJumpToTool(typeof tool.payload?.tool_name === 'string' ? tool.payload.tool_name : tool.label)
+    setFollowOutput(false)
+    handleJumpToTurn(source.turn_index, {
+      ...source,
+      agent_type: session?.agent_type ?? '',
+      session_id: sessionId ?? '',
+      precision: { state: 'exact' },
+    })
+  }, [handleJumpToTool, handleJumpToTurn, session?.agent_type, sessionId])
+
   // Keyboard navigation
   useEffect(() => {
-    if (!sessionId || !session?.turns?.length) return
+    if (!sessionId || !session?.turns?.length || viewMode !== 'terminal') return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
         e.target instanceof HTMLInputElement ||
@@ -1553,7 +1579,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [jump, session?.turns?.length, sessionId, childContext, returnToParentSession])
+  }, [jump, session?.turns?.length, sessionId, childContext, returnToParentSession, viewMode])
 
   useEffect(() => {
     if (!sessionId) { setSession(null); setEdits([]); return }
@@ -1953,11 +1979,22 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             <SearchIcon className="h-3.5 w-3.5" />
             {t('replay.find')}
           </button>
+          <button type="button" onClick={() => startTransition(() => setViewMode('terminal'))}
+            aria-pressed={viewMode === 'terminal'} data-testid="session-terminal-tab"
+            className={`h-7 rounded-md px-2 text-nav ${viewMode === 'terminal' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}>
+            {t('execution.terminal')}
+          </button>
           <button
-            onClick={() => startTransition(() => setViewMode(v => v === 'analytics' ? 'terminal' : 'analytics'))}
+            type="button" aria-pressed={viewMode === 'analytics'} data-testid="session-analytics-tab"
+            onClick={() => startTransition(() => setViewMode('analytics'))}
             className={`h-7 rounded-md px-2 text-nav ${viewMode === 'analytics' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
           >
             {t('replay.analytics')}
+          </button>
+          <button type="button" onClick={() => startTransition(() => setViewMode('execution'))}
+            aria-pressed={viewMode === 'execution'} data-testid="session-execution-tab"
+            className={`h-7 whitespace-nowrap rounded-md px-2 text-nav ${viewMode === 'execution' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}>
+            {t('execution.title')}
           </button>
           <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{t('replay.export')}</a>
@@ -2004,7 +2041,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             hover, default cursor): it sits inside the meta text run as a
             colored-dot status readout, not a button.
           */}
-          {viewMode === 'terminal' && terminalLoading ? (
+          {viewMode === 'execution' ? null : viewMode === 'terminal' && terminalLoading ? (
             <span className="mr-1.5 inline-flex cursor-default items-center gap-1 text-meta text-[var(--accent-blue)]" data-testid="replay-status" data-state="loading">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--accent-blue)]" />{t('replay.statusLoading')}
             </span>
@@ -2053,7 +2090,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
           )}
         </span>
         <span className="text-[var(--border-default)] mx-1">|</span>
-        <div className="flex items-center gap-2 mr-4">
+        <div className="flex items-center gap-2 mr-4" hidden={viewMode === 'execution'} style={viewMode === 'execution' ? { display: 'none' } : undefined}>
           <span className="text-nav text-[var(--text-muted)]">{t('replay.navigation')}</span>
           <button
             onClick={() => setShowUserPanel(v => {
@@ -2243,7 +2280,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               </button>
             </div>
           )}
-          {collabDockOpen && (collabAvailable || collabHadDataRef.current) && (
+          {viewMode !== 'execution' && collabDockOpen && (collabAvailable || collabHadDataRef.current) && (
             <CollaborationDock
               // Remount per session so the previous session's lanes and
               // selection never flash into the next session.
@@ -2277,11 +2314,14 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               onClose={() => setSearchOpen(false)}
             />
           )}
+          <ExecutionBoardView key={`${session.id}:${session.agent_type}:${locale}`}
+            sessionId={session.id} agentType={session.agent_type} active={viewMode === 'execution'}
+            onJumpToSource={handleJumpToExecutionSource} />
           {viewMode === 'analytics' ? (
             <Suspense fallback={<AnalyticsSkeleton />}>
               <AnalyticsView sessionId={session.id} agentType={session.agent_type} isLive={session.is_live} onJumpToTurn={handleJumpToTurn} onJumpToTool={handleJumpToTool} />
             </Suspense>
-          ) : tsKinds !== null && (
+          ) : viewMode === 'terminal' && tsKinds !== null && (
             <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>
               <TerminalPanel
                 sessionId={session.id}
@@ -2386,14 +2426,14 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
           )}
         </div>
         </div>
-        <MiniMap
+        {viewMode !== 'execution' && <MiniMap
           turns={turns}
           positions={positionsBuilding ? null : displayPositions}
           billing={session?.billing}
           controlRef={miniMapControlRef}
           scrollToIndexRef={scrollToIndexRef}
           scrollToTopRef={scrollToTopRef}
-        />
+        />}
       </div>
 
       <SessionCapabilityPanel

@@ -206,6 +206,80 @@ export async function focusSessionTerminal(id: string, agent: string): Promise<T
   return readJson<TerminalFocusResult>(res, 'terminal focus')
 }
 
+export interface ExecutionRef {
+  event_id: string
+  turn_index: number
+  tool_call_id?: string
+}
+
+export interface ExecutionStage {
+  id: string
+  title: string
+  status: 'active' | 'completed' | 'planned'
+  summary: string
+  source_refs: ExecutionRef[]
+}
+
+export interface ExecutionUpdate {
+  id: string
+  text: string
+  created_at: string
+  source_refs: ExecutionRef[]
+}
+
+export interface ExecutionBoard {
+  enabled: boolean
+  status: 'idle' | 'watching' | 'summarizing' | 'paused' | 'error'
+  goal: string
+  current: {
+    action: string
+    purpose: string
+    blocker: string
+    next_step: string
+    source_refs: ExecutionRef[]
+  }
+  activity: {
+    kind: 'tool' | 'responding' | 'idle'
+    tool_name: string
+    started_at?: string
+    source_refs: ExecutionRef[]
+  }
+  stages: ExecutionStage[]
+  updates: ExecutionUpdate[]
+  updated_at?: string
+  observed_at?: string
+  pending_events: number
+  error_code?: string
+  provider_id?: number
+  source_limited: boolean
+}
+
+export type ExecutionLocale = 'en' | 'zh-CN'
+
+/** Reading a board never enables its paid background summaries. */
+export async function fetchExecutionBoard(id: string, agent: string, locale: ExecutionLocale, signal?: AbortSignal): Promise<ExecutionBoard> {
+  const params = new URLSearchParams({ agent, locale })
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/execution?${params}`, { signal })
+  if (!res.ok) throw await responseError(res, 'execution_load_failed')
+  return readJson<ExecutionBoard>(res, 'execution board')
+}
+
+export async function setExecutionBoardEnabled(
+  id: string,
+  input: { agent: string; locale: ExecutionLocale; enabled: boolean; provider_id?: number },
+  signal?: AbortSignal,
+): Promise<ExecutionBoard> {
+  const params = new URLSearchParams({ agent: input.agent, locale: input.locale })
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/execution?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+    signal,
+  })
+  if (!res.ok) throw await responseError(res, 'execution_update_failed')
+  return readJson<ExecutionBoard>(res, 'execution board')
+}
+
 // ---- Collaboration detail (frozen Wave 2 contract) ----
 
 /**
@@ -766,8 +840,8 @@ function unwrapMarkdownFence(raw: string): string {
 
 export type AIKind = 'summary' | 'title' | 'handoff'
 
-export async function fetchLLMProviders(): Promise<{ providers: LLMProvider[]; acp_agents: string[] }> {
-  const res = await fetch('/api/llm/providers')
+export async function fetchLLMProviders(signal?: AbortSignal): Promise<{ providers: LLMProvider[]; acp_agents: string[] }> {
+  const res = await fetch('/api/llm/providers', { signal })
   if (!res.ok) throw await responseError(res, 'providers_load_failed')
   return res.json()
 }
